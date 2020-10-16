@@ -2,6 +2,8 @@
 #include "system_MKL25Z4.h"             // Keil::Device:Startup
 
 volatile uint8_t rx_data;
+volatile int isMoving = 0;
+unsigned int counter = 0;
 
 /* UART */
 #define BAUD_RATE 9600
@@ -13,15 +15,12 @@ volatile uint8_t rx_data;
 #define BACK    4  //0b0000 0100
 #define LEFT    8  //0b0000 1000
 #define RIGHT   16 //0b0001 0000
+
 #define MOVE_MASK(x) (x & 0X1E) //x & 0b0001 1110
 #define BIT0_MASK(x) (x & 0x01) //check if ON bit is enabled
-
-// #define RED_LED   18
-// #define GREEN_LED 19
-// #define BLUE_LED  1
 #define MASK(x) (1 << (x))
 
-// for uart data buffers
+// for UART data buffers
 #define Q_SIZE 5
 #define INIT_VAL 0
 
@@ -30,6 +29,24 @@ volatile uint8_t rx_data;
 #define PTB0_Pin 0	// R, backwards
 #define PTE30_Pin 30	// L, forwards
 #define PTE29_Pin 29 // L, backwards
+
+/* GREEN LEDs */
+#define PTA1_LED1 1
+#define PTA2_LED2 2
+#define PTD4_LED3 4
+#define PTA12_LED4 12
+#define PTA4_LED5 4
+#define PTA5_LED6 5
+#define PTC8_LED7 8
+#define PTC9_LED8 9
+
+
+
+
+
+/* 
+	UTILITY FUNCTIONS 
+*/
 
 static void delay(volatile uint32_t nof) {
   while(nof!=0) {
@@ -42,6 +59,149 @@ void delay_mult100(volatile uint32_t nof) {
 	for (int i = 0; i < 100; i++) 
 		delay(nof);
 }
+
+
+
+
+
+
+/* 
+	LED CONTROL FUNCTIONS 
+*/
+
+typedef enum led_order {
+	led_1 = 0,
+	led_2 = 1,
+	led_3 = 2,
+	led_4 = 3,
+	led_5 = 4,
+	led_6 = 5,
+	led_7 = 6,
+	led_8 = 7
+} led_order_t;
+
+char led_mapping[8][2] = {{0, led_1},
+													{1, led_2}, 
+													{2, led_3},
+													{3, led_4}, 
+													{4, led_5},
+													{5, led_6}, 
+													{6, led_7},
+													{7, led_8}
+												};
+
+void InitGPIO(void){
+	// Enable clock to Port B and Port D
+	SIM->SCGC5 |= ((SIM_SCGC5_PORTA_MASK) | (SIM_SCGC5_PORTC_MASK)| (SIM_SCGC5_PORTD_MASK));
+	
+	// Make pins GPIO
+	PORTA->PCR[PTA1_LED1] &= ~PORT_PCR_MUX_MASK;
+	PORTA->PCR[PTA1_LED1] |= PORT_PCR_MUX(1);
+	
+	PORTA->PCR[PTA2_LED2] &= ~PORT_PCR_MUX_MASK;
+	PORTA->PCR[PTA2_LED2] |= PORT_PCR_MUX(1);
+	
+	PORTD->PCR[PTD4_LED3] &= ~PORT_PCR_MUX_MASK;
+	PORTD->PCR[PTD4_LED3] |= PORT_PCR_MUX(1);
+	
+	PORTA->PCR[PTA12_LED4] &= ~PORT_PCR_MUX_MASK;
+	PORTA->PCR[PTA12_LED4] |= PORT_PCR_MUX(1);
+	
+	PORTA->PCR[PTA4_LED5] &= ~PORT_PCR_MUX_MASK;
+	PORTA->PCR[PTA4_LED5] |= PORT_PCR_MUX(1);
+	
+	PORTA->PCR[PTA5_LED6] &= ~PORT_PCR_MUX_MASK;
+	PORTA->PCR[PTA5_LED6] |= PORT_PCR_MUX(1);
+	
+	PORTC->PCR[PTC8_LED7] &= ~PORT_PCR_MUX_MASK;
+	PORTC->PCR[PTC8_LED7] |= PORT_PCR_MUX(1);
+	
+	PORTC->PCR[PTC9_LED8] &= ~PORT_PCR_MUX_MASK;
+	PORTC->PCR[PTC9_LED8] |= PORT_PCR_MUX(1);
+	
+	// Set pins as output
+	PTA->PDDR |= (MASK(PTA1_LED1) | MASK(PTA2_LED2) | MASK(PTA4_LED5) | MASK(PTA5_LED6) | MASK(PTA12_LED4));	
+	PTD->PDDR |= MASK(PTD4_LED3);
+	PTC->PDDR |= (MASK(PTC8_LED7) | MASK(PTC9_LED8));
+}
+
+void offGreenLEDs(void){
+	PTA->PCOR |= (MASK(PTA1_LED1) | MASK(PTA2_LED2) | MASK(PTA4_LED5) | MASK(PTA5_LED6) | MASK(PTA12_LED4));	
+	PTD->PCOR |= MASK(PTD4_LED3);
+	PTC->PCOR |= (MASK(PTC8_LED7) | MASK(PTC9_LED8));
+}
+
+void onGreenLEDs(void) {
+	PTA->PSOR |= (MASK(PTA1_LED1) | MASK(PTA2_LED2) | MASK(PTA4_LED5) | MASK(PTA5_LED6) | MASK(PTA12_LED4));	
+	PTD->PSOR |= MASK(PTD4_LED3);
+	PTC->PSOR |= (MASK(PTC8_LED7) | MASK(PTC9_LED8));
+}
+
+void ledControl(led_order_t number){
+	offGreenLEDs();
+	switch(number){
+		case led_1:
+			PTA->PSOR = MASK(PTA1_LED1);
+			break;
+		
+		case led_2:
+			PTA->PSOR = MASK(PTA2_LED2);
+			break;
+	
+		case led_3:
+			PTD->PSOR = MASK(PTD4_LED3);
+			break;
+
+		case led_4:
+			PTA->PSOR = MASK(PTA12_LED4);
+			break;
+
+		case led_5:
+			PTA->PSOR = MASK(PTA4_LED5);
+			break;
+	
+		case led_6:
+			PTA->PSOR = MASK(PTA5_LED6);
+			break;		
+
+		case led_7:
+			PTC->PSOR = MASK(PTC8_LED7);
+			break;
+		
+		case led_8:
+			PTC->PSOR = MASK(PTC9_LED8);
+			break;
+	
+		default:
+			offGreenLEDs();
+	}
+}
+
+void runGreenLEDs(void) {
+	counter++;
+	ledControl(led_mapping[counter][1]);
+	if (counter > 0x07) counter = 0;
+}
+
+
+void ledMoving(void) {
+	runGreenLEDs();
+	//TODO: implement moving red LEDs behaviour
+}
+
+void ledNotMoving(void) {
+	onGreenLEDs();
+	//TODO: implement NOT moving red LEDs behaviour
+}
+
+
+
+
+
+
+/* 
+	UART FUNCTIONS 
+*/
 
 typedef struct {
 	unsigned char Data[Q_SIZE];
@@ -224,6 +384,15 @@ void initPWM(void) {
 	TPM1->SC &= ~(TPM_SC_CPWMS_MASK);
 }
 
+
+
+
+
+
+/* 
+	MOVEMENT FUNCTIONS 
+*/
+
 void moveForward(void){
 	
 	// enable PWM on TPM1 Channel 1 -> PTB1
@@ -302,6 +471,9 @@ void turnRight(void){
 }
 
 void stopMotors(void){
+	
+	isMoving = 0;
+	
 	TPM1_C1SC &= ~((TPM_CnSC_ELSB_MASK) | 
 	               (TPM_CnSC_ELSA_MASK) |
 								 (TPM_CnSC_MSB_MASK)  |
@@ -324,17 +496,29 @@ void stopMotors(void){
 }
 
 
+
+
+
+/*
+	MAIN FUNCTION
+*/
+
 int main(void) {
-	char i = 0;
 	SystemCoreClockUpdate();
+	InitGPIO();
 	initPWM();
 	initUART2(BAUD_RATE);
 	
 	while(1) {
 		
+		if (isMoving) ledMoving();
+		else ledNotMoving();
+		delay(0x50000);
+		
 		if(!isQEmpty(&rxQ)) {
 			rx_data = deqFromQ(&rxQ);
 			if (BIT0_MASK(rx_data))
+				isMoving = 1;
 				switch(MOVE_MASK(rx_data)) {
 					case (FORWARD):
 						moveForward();
@@ -351,10 +535,10 @@ int main(void) {
 					default:
 						stopMotors();
 				}
+			}
 			else {
 				stopMotors();
 			}
 		}
 		
 	}
-}
